@@ -53,6 +53,21 @@ teardown() { teardown_fake_agy_dir; }
   [[ "$output" == *"already active"* ]]
 }
 
+@test "save: copies settings into named profile" {
+  run bash "$AGY_SWITCH" save personal
+  [ "$status" -eq 0 ]
+  [ -f "$AGY_DIR/profiles/personal/settings.json" ]
+}
+
+@test "use: overwrites active settings file with profile settings" {
+  echo '{"model":"Original"}' > "$AGY_DIR/settings.json"
+  bash "$AGY_SWITCH" save personal
+  echo '{"model":"Modified"}' > "$AGY_DIR/settings.json"
+  bash "$AGY_SWITCH" use personal
+  run grep "Original" "$AGY_DIR/settings.json"
+  [ "$status" -eq 0 ]
+}
+
 @test "use: nonexistent profile exits 1" {
   run bash "$AGY_SWITCH" use nonexistent
   [ "$status" -eq 1 ]

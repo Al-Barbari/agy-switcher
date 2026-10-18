@@ -11,7 +11,9 @@ setup_fake_agy_dir() {
 }
 
 teardown_fake_agy_dir() {
-  rm -rf "$AGY_DIR"
+  if [[ -n "${AGY_DIR:-}" && -d "$AGY_DIR" ]]; then
+    rm -rf "$AGY_DIR"
+  fi
 }
 
 # Path to the script under test
