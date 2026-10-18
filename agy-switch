@@ -17,6 +17,7 @@
 #    agy-switch use  <name>       Activate a profile (swap token + settings)
 #    agy-switch current           Print the active profile name
 #    agy-switch delete <name>     Remove a saved profile
+#    agy-switch rename <old> <new> Rename a saved profile
 #    agy-switch settings [mode]   Get or set settings mode (per-profile or shared)
 #    agy-switch help              Show this help message
 #
@@ -321,6 +322,35 @@ cmd_delete() {
   _info "Deleted profile '${name}'"
 }
 
+cmd_rename() {
+  local old="${1:-}"
+  local new="${2:-}"
+  if [[ -z "$old" || -z "$new" ]]; then
+    _error "Usage: agy-switch rename <old-name> <new-name>"
+    exit 1
+  fi
+
+  _require_profiles_dir
+  _require_profile "$old"
+
+  _validate_profile_name "$new"
+
+  if [[ -d "${PROFILES_DIR}/${new}" ]]; then
+    _error "Profile '${new}' already exists."
+    exit 1
+  fi
+
+  mv "${PROFILES_DIR}/${old}" "${PROFILES_DIR}/${new}"
+
+  local current
+  current=$(_current_name)
+  if [[ "$old" == "$current" ]]; then
+    echo "$new" > "$CURRENT_FILE"
+  fi
+
+  _info "Renamed profile '${BOLD}${old}${RESET}' to '${BOLD}${new}${RESET}'"
+}
+
 cmd_help() {
   cat <<EOF
 
@@ -336,6 +366,7 @@ $(echo -e "${BOLD}COMMANDS${RESET}")
   use  <name>                     Activate a saved profile (swaps token + settings)
   current                         Print the name of the currently active profile
   delete <name>                   Remove a saved profile (cannot delete the active profile)
+  rename <old> <new>              Rename a saved profile
   settings [per-profile|shared]   View or set settings mode ('per-profile' | 'shared')
   help                            Show this help message
 
@@ -364,6 +395,7 @@ case "${1:-help}" in
   use)      cmd_use  "${2:-}" ;;
   current)  cmd_current ;;
   delete)   cmd_delete "${2:-}" ;;
+  rename)   cmd_rename "${2:-}" "${3:-}" ;;
   settings) cmd_settings "${2:-}" ;;
   help|--help|-h) cmd_help ;;
   *)
