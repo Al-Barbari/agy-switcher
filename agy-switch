@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  agy-switch — Switch between multiple Google Antigravity (AGY) accounts
+# =============================================================================
+#
+#  Manages named "profiles" stored under:
+#    ~/.gemini/antigravity-cli/profiles/<name>/
+#
+#  Each profile stores:
+#    • antigravity-oauth-token  — full OAuth credentials for that account
+#    • settings.json            — per-profile AGY settings (model, mode, etc.)
+#
+#  Usage:
+#    agy-switch init              First-time setup (saves current → "default")
+#    agy-switch list              Show all profiles; active one is marked with *
+#    agy-switch save <name>       Snapshot current account into a named profile
+#    agy-switch use  <name>       Activate a profile (swap token + settings)
+#    agy-switch current           Print the active profile name
+#    agy-switch delete <name>     Remove a saved profile
+#    agy-switch help              Show this help message
+#
+# =============================================================================
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+AGY_DIR="${HOME}/.gemini/antigravity-cli"
+PROFILES_DIR="${AGY_DIR}/profiles"
+TOKEN_FILE="${AGY_DIR}/antigravity-oauth-token"
+SETTINGS_FILE="${AGY_DIR}/settings.json"
+CURRENT_FILE="${AGY_DIR}/.agy-current-profile"
+
+# ---------------------------------------------------------------------------
+# Colours (disabled when not a TTY)
+# ---------------------------------------------------------------------------
+if [[ -t 1 ]]; then
+  GREEN="\033[0;32m"
+  YELLOW="\033[0;33m"
+  RED="\033[0;31m"
+  BOLD="\033[1m"
+  RESET="\033[0m"
+else
+  GREEN="" YELLOW="" RED="" BOLD="" RESET=""
+fi
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+_info()    { echo -e "${GREEN}✓${RESET}  $*"; }
+_warn()    { echo -e "${YELLOW}⚠${RESET}  $*"; }
+_error()   { echo -e "${RED}✗${RESET}  $*" >&2; }
+_bold()    { echo -e "${BOLD}$*${RESET}"; }
+
+_current_name() {
+  if [[ -f "$CURRENT_FILE" ]]; then
+    cat "$CURRENT_FILE"
+  else
+    echo "(none)"
+  fi
+}
+
+_require_profiles_dir() {
+  if [[ ! -d "$PROFILES_DIR" ]]; then
+    _error "No profiles directory found. Run:  agy-switch init"
+    exit 1
+  fi
+}
+
+_profile_exists() {
+  [[ -d "${PROFILES_DIR}/$1" && -f "${PROFILES_DIR}/$1/antigravity-oauth-token" ]]
+}
+
+_require_profile() {
+  local name="$1"
+  if ! _profile_exists "$name"; then
+    _error "Profile '${name}' not found."
+    echo    "       Run 'agy-switch list' to see available profiles."
+    exit 1
+  fi
+}
+
+_require_token_file() {
+  if [[ ! -f "$TOKEN_FILE" ]]; then
+    _error "No active AGY token file found at:"
+    echo    "       ${TOKEN_FILE}"
+    echo    "       Please authenticate first by running: agy"
+    exit 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+cmd_init() {
+  if [[ -d "$PROFILES_DIR" ]] && ls "${PROFILES_DIR}/"* &>/dev/null 2>&1; then
+    _warn "Profiles directory already exists. To re-initialize, delete it first:"
+    echo  "       rm -rf ${PROFILES_DIR}"
+    echo  ""
+    cmd_list
+    exit 0
+  fi
+
+  _require_token_file
+  mkdir -p "$PROFILES_DIR"
+
+  cmd_save "default"
+  echo "default" > "$CURRENT_FILE"
+
+  echo ""
+  _bold "Initialized! Current account saved as profile 'default'."
+  echo ""
+  echo "  To add a second account:"
+  echo "    1.  Run 'agy' and follow the auth prompts to log in"
+  echo "    2.  Exit agy (Ctrl+D Ctrl+D)"
+  echo "    3.  Run:  agy-switch save <profile-name>"
+  echo "    4.  Run:  agy-switch use default  (to switch back)"
+  echo ""
+}
+
+cmd_list() {
+  _require_profiles_dir
+
+  local current
+  current=$(_current_name)
+  local found=false
+
+  _bold "AGY Profiles"
+  echo  "──────────────────────────────────"
+
+  for dir in "${PROFILES_DIR}"/*/; do
+    [[ -d "$dir" ]] || continue
+    found=true
+    local name
+    name=$(basename "$dir")
+    if [[ "$name" == "$current" ]]; then
+      echo -e "  ${GREEN}*${RESET} ${BOLD}${name}${RESET}  ${GREEN}(active)${RESET}"
+    else
+      echo -e "    ${name}"
+    fi
+  done
+
+  if [[ "$found" == false ]]; then
+    echo "  (no profiles saved yet)"
+    echo ""
+    echo "  Run: agy-switch init   — to save your current account as 'default'"
+  fi
+
+  echo ""
+}
+
+cmd_save() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    _error "Usage: agy-switch save <name>"
+    exit 1
+  fi
+
+  # Validate name — alphanumeric, dashes, underscores only
+  if [[ ! "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    _error "Profile name '${name}' is invalid."
+    echo    "       Use only letters, numbers, hyphens, and underscores."
+    exit 1
+  fi
+
+  _require_token_file
+
+  local profile_dir="${PROFILES_DIR}/${name}"
+  local is_overwrite=false
+  if [[ -d "$profile_dir" ]]; then
+    is_overwrite=true
+    _warn "Profile '${name}' already exists — overwriting."
+  fi
+
+  mkdir -p "$profile_dir"
+  cp "$TOKEN_FILE" "${profile_dir}/antigravity-oauth-token"
+
+  if [[ -f "$SETTINGS_FILE" ]]; then
+    cp "$SETTINGS_FILE" "${profile_dir}/settings.json"
+  fi
+
+  if [[ "$is_overwrite" == false ]]; then
+    _info "Saved current account as profile '${BOLD}${name}${RESET}'"
+  else
+    _info "Updated profile '${BOLD}${name}${RESET}' with current account"
+  fi
+}
+
+cmd_use() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    _error "Usage: agy-switch use <name>"
+    exit 1
+  fi
+
+  _require_profiles_dir
+  _require_profile "$name"
+
+  # Don't switch to the already-active profile
+  local current
+  current=$(_current_name)
+  if [[ "$name" == "$current" ]]; then
+    _warn "Profile '${name}' is already active. No change made."
+    exit 0
+  fi
+
+  # Swap token
+  cp "${PROFILES_DIR}/${name}/antigravity-oauth-token" "$TOKEN_FILE"
+
+  # Swap settings if the profile has one
+  if [[ -f "${PROFILES_DIR}/${name}/settings.json" ]]; then
+    cp "${PROFILES_DIR}/${name}/settings.json" "$SETTINGS_FILE"
+  fi
+
+  # Record active profile
+  echo "$name" > "$CURRENT_FILE"
+
+  _info "Switched to profile '${BOLD}${name}${RESET}'"
+  echo  "     Run 'agy' to start a session with this account."
+}
+
+cmd_current() {
+  local current
+  current=$(_current_name)
+  if [[ "$current" == "(none)" ]]; then
+    _warn "No profile is currently tracked."
+    echo  "       Run: agy-switch init   — to set one up."
+  else
+    echo -e "Active profile: ${BOLD}${current}${RESET}"
+  fi
+}
+
+cmd_delete() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    _error "Usage: agy-switch delete <name>"
+    exit 1
+  fi
+
+  _require_profiles_dir
+  _require_profile "$name"
+
+  # Guard against deleting the active profile
+  local current
+  current=$(_current_name)
+  if [[ "$name" == "$current" ]]; then
+    _error "Cannot delete the currently active profile '${name}'."
+    echo    "       Switch to another profile first:  agy-switch use <other>"
+    exit 1
+  fi
+
+  rm -rf "${PROFILES_DIR:?}/${name}"
+  _info "Deleted profile '${name}'"
+}
+
+cmd_help() {
+  cat <<EOF
+
+$(echo -e "${BOLD}agy-switch${RESET}") — Google Antigravity (AGY) account switcher
+
+$(echo -e "${BOLD}USAGE${RESET}")
+  agy-switch <command> [arguments]
+
+$(echo -e "${BOLD}COMMANDS${RESET}")
+  init              First-time setup — saves your current account as 'default'
+  list              List all profiles; the active one is marked with *
+  save <name>       Snapshot the current account into a named profile
+  use  <name>       Activate a saved profile (swaps token + settings)
+  current           Print the name of the currently active profile
+  delete <name>     Remove a saved profile (cannot delete the active profile)
+  help              Show this help message
+
+$(echo -e "${BOLD}EXAMPLES${RESET}")
+  agy-switch init             # One-time setup
+  agy-switch save personal    # Save a second account as 'personal'
+  agy-switch use personal     # Switch to personal account
+  agy-switch use default      # Switch back to default/work account
+  agy-switch list             # See all profiles
+
+$(echo -e "${BOLD}PROFILES LOCATION${RESET}")
+  ${PROFILES_DIR}/
+
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+case "${1:-help}" in
+  init)    cmd_init ;;
+  list)    cmd_list ;;
+  save)    cmd_save "${2:-}" ;;
+  use)     cmd_use  "${2:-}" ;;
+  current) cmd_current ;;
+  delete)  cmd_delete "${2:-}" ;;
+  help|--help|-h) cmd_help ;;
+  *)
+    _error "Unknown command: '$1'"
+    echo    "       Run: agy-switch help"
+    exit 1
+    ;;
+esac

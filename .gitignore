@@ -1,0 +1,10 @@
+# ─── AGY Profile Credentials ─────────────────────────────────────────────────
+# NEVER commit OAuth tokens or credentials to version control!
+profiles/
+
+# ─── OS / Editor ─────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+*.swp
+*.swo
+*~
