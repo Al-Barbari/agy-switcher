@@ -90,6 +90,29 @@ _require_token_file() {
   fi
 }
 
+_validate_profile_name() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    _error "Profile name cannot be empty."
+    exit 1
+  fi
+
+  if [[ ! "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    _error "Profile name '${name}' is invalid."
+    echo    "       Use only letters, numbers, hyphens, and underscores."
+    exit 1
+  fi
+
+  local reserved=("init" "list" "save" "use" "current" "delete" "rename" "add" "settings" "help")
+  for kw in "${reserved[@]}"; do
+    if [[ "$name" == "$kw" ]]; then
+      _error "Profile name '${name}' is reserved."
+      echo    "       '${name}' is a reserved command name and cannot be used as a profile name."
+      exit 1
+    fi
+  done
+}
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -158,12 +181,7 @@ cmd_save() {
     exit 1
   fi
 
-  # Validate name — alphanumeric, dashes, underscores only
-  if [[ ! "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-    _error "Profile name '${name}' is invalid."
-    echo    "       Use only letters, numbers, hyphens, and underscores."
-    exit 1
-  fi
+  _validate_profile_name "$name"
 
   _require_token_file
 
