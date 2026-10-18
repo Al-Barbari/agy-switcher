@@ -13,10 +13,13 @@
 #  Usage:
 #    agy-switch init              First-time setup (saves current → "default")
 #    agy-switch list              Show all profiles; active one is marked with *
+#    agy-switch add <name>        Guide through adding a new account profile
 #    agy-switch save <name>       Snapshot current account into a named profile
-#    agy-switch use  <name>       Activate a profile (swap token + settings)
+#    agy-switch use  [name]       Activate a profile (interactive menu if omitted)
 #    agy-switch current           Print the active profile name
 #    agy-switch delete <name>     Remove a saved profile
+#    agy-switch rename <old> <new> Rename a saved profile
+#    agy-switch settings [mode]   Get or set settings mode (per-profile or shared)
 #    agy-switch help              Show this help message
 #
 # =============================================================================
@@ -26,11 +29,12 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-AGY_DIR="${HOME}/.gemini/antigravity-cli"
+AGY_DIR="${AGY_DIR:-${HOME}/.gemini/antigravity-cli}"
 PROFILES_DIR="${AGY_DIR}/profiles"
 TOKEN_FILE="${AGY_DIR}/antigravity-oauth-token"
 SETTINGS_FILE="${AGY_DIR}/settings.json"
 CURRENT_FILE="${AGY_DIR}/.agy-current-profile"
+SETTINGS_MODE_FILE="${AGY_DIR}/.agy-settings-mode"
 
 # ---------------------------------------------------------------------------
 # Colours (disabled when not a TTY)
@@ -61,6 +65,30 @@ _current_name() {
   fi
 }
 
+_get_settings_mode() {
+  local mode="per-profile"
+  if [[ -f "$SETTINGS_MODE_FILE" ]]; then
+    local stored
+    stored="$(cat "$SETTINGS_MODE_FILE" 2>/dev/null || true)"
+    if [[ "$stored" == "shared" || "$stored" == "per-profile" ]]; then
+      mode="$stored"
+    fi
+  fi
+  echo "$mode"
+}
+
+_set_settings_mode() {
+  local mode="$1"
+  if [[ "$mode" != "per-profile" && "$mode" != "shared" ]]; then
+    _error "Invalid settings mode: '${mode}'"
+    echo   "       Valid options are: per-profile, shared"
+    exit 1
+  fi
+  mkdir -p "$AGY_DIR"
+  echo "$mode" > "$SETTINGS_MODE_FILE"
+  _info "Settings mode set to: ${BOLD}${mode}${RESET}"
+}
+
 _require_profiles_dir() {
   if [[ ! -d "$PROFILES_DIR" ]]; then
     _error "No profiles directory found. Run:  agy-switch init"
@@ -88,6 +116,29 @@ _require_token_file() {
     echo    "       Please authenticate first by running: agy"
     exit 1
   fi
+}
+
+_validate_profile_name() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    _error "Profile name cannot be empty."
+    exit 1
+  fi
+
+  if [[ ! "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    _error "Profile name '${name}' is invalid."
+    echo    "       Use only letters, numbers, hyphens, and underscores."
+    exit 1
+  fi
+
+  local reserved=("init" "list" "save" "use" "current" "delete" "rename" "add" "settings" "help")
+  for kw in "${reserved[@]}"; do
+    if [[ "$name" == "$kw" ]]; then
+      _error "Profile name '${name}' is reserved."
+      echo    "       '${name}' is a reserved command name and cannot be used as a profile name."
+      exit 1
+    fi
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -151,6 +202,31 @@ cmd_list() {
   echo ""
 }
 
+cmd_add() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    _error "Usage: agy-switch add <name>"
+    exit 1
+  fi
+
+  _require_profiles_dir
+  _validate_profile_name "$name"
+
+  if [[ -d "${PROFILES_DIR}/${name}" ]]; then
+    _error "Profile '${name}' already exists."
+    exit 1
+  fi
+
+  echo ""
+  _bold "Adding new profile: ${name}"
+  echo "──────────────────────────────────"
+  echo "  1. Run 'agy' in your terminal and complete the login prompts for this account."
+  echo "  2. Once inside the agy session, exit with Ctrl+D Ctrl+D (or /exit)."
+  echo "  3. Save the account credentials as '${name}':"
+  echo "       agy-switch save ${name}"
+  echo ""
+}
+
 cmd_save() {
   local name="${1:-}"
   if [[ -z "$name" ]]; then
@@ -158,12 +234,7 @@ cmd_save() {
     exit 1
   fi
 
-  # Validate name — alphanumeric, dashes, underscores only
-  if [[ ! "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-    _error "Profile name '${name}' is invalid."
-    echo    "       Use only letters, numbers, hyphens, and underscores."
-    exit 1
-  fi
+  _validate_profile_name "$name"
 
   _require_token_file
 
@@ -190,12 +261,46 @@ cmd_save() {
 
 cmd_use() {
   local name="${1:-}"
+  _require_profiles_dir
+
   if [[ -z "$name" ]]; then
-    _error "Usage: agy-switch use <name>"
-    exit 1
+    local profiles=()
+    for dir in "${PROFILES_DIR}"/*/; do
+      [[ -d "$dir" ]] || continue
+      profiles+=("$(basename "$dir")")
+    done
+
+    if [[ ${#profiles[@]} -eq 0 ]]; then
+      _error "No profiles found. Run: agy-switch init"
+      exit 1
+    fi
+
+    local current
+    current=$(_current_name)
+    _bold "Select an AGY profile to switch to:"
+    local i=1
+    for p in "${profiles[@]}"; do
+      if [[ "$p" == "$current" ]]; then
+        echo -e "  ${i}) ${GREEN}*${RESET} ${BOLD}${p}${RESET} ${GREEN}(active)${RESET}"
+      else
+        echo -e "  ${i}) ${p}"
+      fi
+      ((i++))
+    done
+    echo ""
+    read -r -p "Enter number or profile name (or 'q' to cancel): " choice || true
+    if [[ -z "$choice" || "$choice" == "q" || "$choice" == "Q" ]]; then
+      echo "Cancelled."
+      exit 0
+    fi
+
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#profiles[@]} )); then
+      name="${profiles[$((choice-1))]}"
+    else
+      name="$choice"
+    fi
   fi
 
-  _require_profiles_dir
   _require_profile "$name"
 
   # Don't switch to the already-active profile
@@ -206,12 +311,22 @@ cmd_use() {
     exit 0
   fi
 
-  # Swap token
+  local mode
+  mode=$(_get_settings_mode)
+
+  if [[ "$mode" == "per-profile" ]]; then
+    if [[ "$current" != "(none)" && -d "${PROFILES_DIR}/${current}" && -f "$SETTINGS_FILE" ]]; then
+      cp "$SETTINGS_FILE" "${PROFILES_DIR}/${current}/settings.json"
+    fi
+  fi
+
+  # Swap token (always done regardless of settings mode)
   cp "${PROFILES_DIR}/${name}/antigravity-oauth-token" "$TOKEN_FILE"
 
-  # Swap settings if the profile has one
-  if [[ -f "${PROFILES_DIR}/${name}/settings.json" ]]; then
-    cp "${PROFILES_DIR}/${name}/settings.json" "$SETTINGS_FILE"
+  if [[ "$mode" == "per-profile" ]]; then
+    if [[ -f "${PROFILES_DIR}/${name}/settings.json" ]]; then
+      cp "${PROFILES_DIR}/${name}/settings.json" "$SETTINGS_FILE"
+    fi
   fi
 
   # Record active profile
@@ -219,6 +334,18 @@ cmd_use() {
 
   _info "Switched to profile '${BOLD}${name}${RESET}'"
   echo  "     Run 'agy' to start a session with this account."
+}
+
+cmd_settings() {
+  local mode="${1:-}"
+  if [[ -z "$mode" ]]; then
+    local current_mode
+    current_mode=$(_get_settings_mode)
+    echo -e "Current settings mode: ${BOLD}${current_mode}${RESET}"
+    echo "       (Options: 'per-profile' | 'shared')"
+  else
+    _set_settings_mode "$mode"
+  fi
 }
 
 cmd_current() {
@@ -255,6 +382,35 @@ cmd_delete() {
   _info "Deleted profile '${name}'"
 }
 
+cmd_rename() {
+  local old="${1:-}"
+  local new="${2:-}"
+  if [[ -z "$old" || -z "$new" ]]; then
+    _error "Usage: agy-switch rename <old-name> <new-name>"
+    exit 1
+  fi
+
+  _require_profiles_dir
+  _require_profile "$old"
+
+  _validate_profile_name "$new"
+
+  if [[ -d "${PROFILES_DIR}/${new}" ]]; then
+    _error "Profile '${new}' already exists."
+    exit 1
+  fi
+
+  mv "${PROFILES_DIR}/${old}" "${PROFILES_DIR}/${new}"
+
+  local current
+  current=$(_current_name)
+  if [[ "$old" == "$current" ]]; then
+    echo "$new" > "$CURRENT_FILE"
+  fi
+
+  _info "Renamed profile '${BOLD}${old}${RESET}' to '${BOLD}${new}${RESET}'"
+}
+
 cmd_help() {
   cat <<EOF
 
@@ -264,20 +420,27 @@ $(echo -e "${BOLD}USAGE${RESET}")
   agy-switch <command> [arguments]
 
 $(echo -e "${BOLD}COMMANDS${RESET}")
-  init              First-time setup — saves your current account as 'default'
-  list              List all profiles; the active one is marked with *
-  save <name>       Snapshot the current account into a named profile
-  use  <name>       Activate a saved profile (swaps token + settings)
-  current           Print the name of the currently active profile
-  delete <name>     Remove a saved profile (cannot delete the active profile)
-  help              Show this help message
+  init                            First-time setup — saves your current account as 'default'
+  list                            List all profiles; the active one is marked with *
+  add  <name>                     Guide through adding a new account profile
+  save <name>                     Snapshot the current account into a named profile
+  use  [name]                     Activate a saved profile (interactive menu if omitted)
+  current                         Print the name of the currently active profile
+  delete <name>                   Remove a saved profile (cannot delete the active profile)
+  rename <old> <new>              Rename a saved profile
+  settings [per-profile|shared]   View or set settings mode ('per-profile' | 'shared')
+  help                            Show this help message
 
 $(echo -e "${BOLD}EXAMPLES${RESET}")
-  agy-switch init             # One-time setup
-  agy-switch save personal    # Save a second account as 'personal'
-  agy-switch use personal     # Switch to personal account
-  agy-switch use default      # Switch back to default/work account
-  agy-switch list             # See all profiles
+  agy-switch init                   # One-time setup
+  agy-switch add personal           # Guided setup for a new account
+  agy-switch save personal          # Save a second account as 'personal'
+  agy-switch use                    # Interactive profile switcher
+  agy-switch use personal           # Switch to personal account
+  agy-switch use default            # Switch back to default/work account
+  agy-switch settings shared        # Use shared settings across all profiles
+  agy-switch settings per-profile   # Use independent settings per profile
+  agy-switch list                   # See all profiles
 
 $(echo -e "${BOLD}PROFILES LOCATION${RESET}")
   ${PROFILES_DIR}/
@@ -289,12 +452,15 @@ EOF
 # Entry point
 # ---------------------------------------------------------------------------
 case "${1:-help}" in
-  init)    cmd_init ;;
-  list)    cmd_list ;;
-  save)    cmd_save "${2:-}" ;;
-  use)     cmd_use  "${2:-}" ;;
-  current) cmd_current ;;
-  delete)  cmd_delete "${2:-}" ;;
+  init)     cmd_init ;;
+  list)     cmd_list ;;
+  add)      cmd_add "${2:-}" ;;
+  save)     cmd_save "${2:-}" ;;
+  use)      cmd_use  "${2:-}" ;;
+  current)  cmd_current ;;
+  delete)   cmd_delete "${2:-}" ;;
+  rename)   cmd_rename "${2:-}" "${3:-}" ;;
+  settings) cmd_settings "${2:-}" ;;
   help|--help|-h) cmd_help ;;
   *)
     _error "Unknown command: '$1'"
