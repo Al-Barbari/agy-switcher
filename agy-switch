@@ -26,7 +26,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-AGY_DIR="${HOME}/.gemini/antigravity-cli"
+AGY_DIR="${AGY_DIR:-${HOME}/.gemini/antigravity-cli}"
 PROFILES_DIR="${AGY_DIR}/profiles"
 TOKEN_FILE="${AGY_DIR}/antigravity-oauth-token"
 SETTINGS_FILE="${AGY_DIR}/settings.json"
