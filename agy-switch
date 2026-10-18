@@ -13,8 +13,9 @@
 #  Usage:
 #    agy-switch init              First-time setup (saves current → "default")
 #    agy-switch list              Show all profiles; active one is marked with *
+#    agy-switch add <name>        Guide through adding a new account profile
 #    agy-switch save <name>       Snapshot current account into a named profile
-#    agy-switch use  <name>       Activate a profile (swap token + settings)
+#    agy-switch use  [name]       Activate a profile (interactive menu if omitted)
 #    agy-switch current           Print the active profile name
 #    agy-switch delete <name>     Remove a saved profile
 #    agy-switch rename <old> <new> Rename a saved profile
@@ -201,6 +202,31 @@ cmd_list() {
   echo ""
 }
 
+cmd_add() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    _error "Usage: agy-switch add <name>"
+    exit 1
+  fi
+
+  _require_profiles_dir
+  _validate_profile_name "$name"
+
+  if [[ -d "${PROFILES_DIR}/${name}" ]]; then
+    _error "Profile '${name}' already exists."
+    exit 1
+  fi
+
+  echo ""
+  _bold "Adding new profile: ${name}"
+  echo "──────────────────────────────────"
+  echo "  1. Run 'agy' in your terminal and complete the login prompts for this account."
+  echo "  2. Once inside the agy session, exit with Ctrl+D Ctrl+D (or /exit)."
+  echo "  3. Save the account credentials as '${name}':"
+  echo "       agy-switch save ${name}"
+  echo ""
+}
+
 cmd_save() {
   local name="${1:-}"
   if [[ -z "$name" ]]; then
@@ -235,12 +261,46 @@ cmd_save() {
 
 cmd_use() {
   local name="${1:-}"
+  _require_profiles_dir
+
   if [[ -z "$name" ]]; then
-    _error "Usage: agy-switch use <name>"
-    exit 1
+    local profiles=()
+    for dir in "${PROFILES_DIR}"/*/; do
+      [[ -d "$dir" ]] || continue
+      profiles+=("$(basename "$dir")")
+    done
+
+    if [[ ${#profiles[@]} -eq 0 ]]; then
+      _error "No profiles found. Run: agy-switch init"
+      exit 1
+    fi
+
+    local current
+    current=$(_current_name)
+    _bold "Select an AGY profile to switch to:"
+    local i=1
+    for p in "${profiles[@]}"; do
+      if [[ "$p" == "$current" ]]; then
+        echo -e "  ${i}) ${GREEN}*${RESET} ${BOLD}${p}${RESET} ${GREEN}(active)${RESET}"
+      else
+        echo -e "  ${i}) ${p}"
+      fi
+      ((i++))
+    done
+    echo ""
+    read -r -p "Enter number or profile name (or 'q' to cancel): " choice || true
+    if [[ -z "$choice" || "$choice" == "q" || "$choice" == "Q" ]]; then
+      echo "Cancelled."
+      exit 0
+    fi
+
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#profiles[@]} )); then
+      name="${profiles[$((choice-1))]}"
+    else
+      name="$choice"
+    fi
   fi
 
-  _require_profiles_dir
   _require_profile "$name"
 
   # Don't switch to the already-active profile
@@ -362,8 +422,9 @@ $(echo -e "${BOLD}USAGE${RESET}")
 $(echo -e "${BOLD}COMMANDS${RESET}")
   init                            First-time setup — saves your current account as 'default'
   list                            List all profiles; the active one is marked with *
+  add  <name>                     Guide through adding a new account profile
   save <name>                     Snapshot the current account into a named profile
-  use  <name>                     Activate a saved profile (swaps token + settings)
+  use  [name]                     Activate a saved profile (interactive menu if omitted)
   current                         Print the name of the currently active profile
   delete <name>                   Remove a saved profile (cannot delete the active profile)
   rename <old> <new>              Rename a saved profile
@@ -372,7 +433,9 @@ $(echo -e "${BOLD}COMMANDS${RESET}")
 
 $(echo -e "${BOLD}EXAMPLES${RESET}")
   agy-switch init                   # One-time setup
+  agy-switch add personal           # Guided setup for a new account
   agy-switch save personal          # Save a second account as 'personal'
+  agy-switch use                    # Interactive profile switcher
   agy-switch use personal           # Switch to personal account
   agy-switch use default            # Switch back to default/work account
   agy-switch settings shared        # Use shared settings across all profiles
@@ -391,6 +454,7 @@ EOF
 case "${1:-help}" in
   init)     cmd_init ;;
   list)     cmd_list ;;
+  add)      cmd_add "${2:-}" ;;
   save)     cmd_save "${2:-}" ;;
   use)      cmd_use  "${2:-}" ;;
   current)  cmd_current ;;
