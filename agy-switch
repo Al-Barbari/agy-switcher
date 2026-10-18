@@ -64,11 +64,15 @@ _current_name() {
 }
 
 _get_settings_mode() {
+  local mode="per-profile"
   if [[ -f "$SETTINGS_MODE_FILE" ]]; then
-    cat "$SETTINGS_MODE_FILE"
-  else
-    echo "per-profile"
+    local stored
+    stored="$(cat "$SETTINGS_MODE_FILE" 2>/dev/null || true)"
+    if [[ "$stored" == "shared" || "$stored" == "per-profile" ]]; then
+      mode="$stored"
+    fi
   fi
+  echo "$mode"
 }
 
 _set_settings_mode() {
@@ -250,26 +254,18 @@ cmd_use() {
   mode=$(_get_settings_mode)
 
   if [[ "$mode" == "per-profile" ]]; then
-    # Auto-save active profile if set and exists
-    if [[ "$current" != "(none)" && -d "${PROFILES_DIR}/${current}" ]]; then
-      if [[ -f "$SETTINGS_FILE" ]]; then
-        cp "$SETTINGS_FILE" "${PROFILES_DIR}/${current}/settings.json"
-      fi
-      if [[ -f "$TOKEN_FILE" ]]; then
-        cp "$TOKEN_FILE" "${PROFILES_DIR}/${current}/antigravity-oauth-token"
-      fi
+    if [[ "$current" != "(none)" && -d "${PROFILES_DIR}/${current}" && -f "$SETTINGS_FILE" ]]; then
+      cp "$SETTINGS_FILE" "${PROFILES_DIR}/${current}/settings.json"
     fi
+  fi
 
-    # Swap token
-    cp "${PROFILES_DIR}/${name}/antigravity-oauth-token" "$TOKEN_FILE"
+  # Swap token (always done regardless of settings mode)
+  cp "${PROFILES_DIR}/${name}/antigravity-oauth-token" "$TOKEN_FILE"
 
-    # Swap settings if the profile has one
+  if [[ "$mode" == "per-profile" ]]; then
     if [[ -f "${PROFILES_DIR}/${name}/settings.json" ]]; then
       cp "${PROFILES_DIR}/${name}/settings.json" "$SETTINGS_FILE"
     fi
-  else
-    # Shared mode: Swap token only. Do NOT touch $SETTINGS_FILE.
-    cp "${PROFILES_DIR}/${name}/antigravity-oauth-token" "$TOKEN_FILE"
   fi
 
   # Record active profile
