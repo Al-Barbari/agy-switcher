@@ -25,6 +25,7 @@ agy                       # → runs as your work account
 - [What Gets Saved Per Profile](#what-gets-saved-per-profile)
 - [Security Notes](#security-notes)
 - [Troubleshooting](#troubleshooting)
+- [Running the Tests](#running-the-tests)
 - [Uninstall](#uninstall)
 
 ---
@@ -402,6 +403,25 @@ agy-switch save <profile-name>   # update the profile with fresh token
 ### Changes not taking effect
 
 Make sure you exited the previous `agy` session before switching. AGY reads credentials at startup — a running session won't pick up the new token.
+
+---
+
+## Running the Tests
+
+The test suite uses [bats](https://github.com/bats-core/bats-core) (Bash Automated Testing System).
+
+**Install bats:**
+```bash
+sudo apt-get install -y bats       # Debian/Ubuntu
+brew install bats-core             # macOS
+```
+
+**Run all tests:**
+```bash
+bats tests/
+```
+
+Tests execute against an isolated temporary directory using the `AGY_DIR` environment override — no real credentials or settings in `~/.gemini/antigravity-cli/` are ever modified or read during testing.
 
 ---
 

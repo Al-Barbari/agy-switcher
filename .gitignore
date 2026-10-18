@@ -8,3 +8,6 @@ profiles/
 *.swp
 *.swo
 *~
+
+# ─── Superpowers scratch ─────────────────────────────────────────────────────
+.superpowers/
